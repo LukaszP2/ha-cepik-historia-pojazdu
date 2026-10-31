@@ -1,0 +1,14 @@
+{
+  "domain": "cepik_historia_pojazdu",
+  "name": "CEPiK Historia Pojazdu",
+  "codeowners": [
+    "@LukaszP2"
+  ],
+  "config_flow": true,
+  "dependencies": [],
+  "requirements": [],
+  "version": "0.3.5",
+  "iot_class": "cloud_polling",
+  "documentation": "https://github.com/LukaszP2/ha-cepik-historia-pojazdu",
+  "issue_tracker": "https://github.com/LukaszP2/ha-cepik-historia-pojazdu/issues"
+}
