@@ -4,6 +4,10 @@
 [![HACS](https://img.shields.io/badge/HACS-Custom-orange.svg?style=flat-square)](https://hacs.xyz)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg?style=flat-square)](LICENSE)
 
+
+[![Otwórz repozytorium w HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=LukaszP2&repository=ha-cepik-historia-pojazdu&category=integration)
+[![Dodaj integrację do Home Assistant](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=cepik_historia_pojazdu)
+
 *(🇬🇧 English description below)*
 
 ---
@@ -20,6 +24,16 @@ Integracja Home Assistant z polskim rejestrem CEPiK (Centralna Ewidencja Pojazd�
 - Podstawowe dane techniczne pojazdu (marka, model, rok produkcji)
 
 ### Instalacja przez HACS (Niestandardowe repozytorium)
+
+### 🚀 Szybka instalacja (1 kliknięcie przez My Home Assistant)
+
+[![Otwórz repozytorium w HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=LukaszP2&repository=ha-cepik-historia-pojazdu&category=integration)
+
+Po zainstalowaniu i ponownym uruchomieniu Home Assistant, kliknij poniższy przycisk, aby skonfigurować integrację:
+
+[![Dodaj integrację do Home Assistant](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=cepik_historia_pojazdu)
+
+
 
 1. Upewnij się, że masz zainstalowany **HACS** w Home Assistant.
 2. W HACS przejdź do: **Integracje** -> menu w prawym górnym rogu (trzy kropki) -> **Niestandardowe repozytoria** (*Custom repositories*).
