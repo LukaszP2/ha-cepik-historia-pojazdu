@@ -1,11 +1,11 @@
 {
   "domain": "cepik_historia_pojazdu",
   "name": "CEPiK Historia Pojazdu",
-  "codeowners": [
-    "@LukaszP2"
-  ],
   "categories": [
     "vehicles_transport.cars_evs"
+  ],
+  "codeowners": [
+    "@LukaszP2"
   ],
   "config_flow": true,
   "dependencies": [],
