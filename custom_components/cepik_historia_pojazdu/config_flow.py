@@ -1,26 +1,35 @@
 from __future__ import annotations
 
-from datetime import date
 import logging
+import re
+from datetime import date
+from typing import Any
 
 import voluptuous as vol
+from aiohttp import ClientError
 from homeassistant import config_entries
+from homeassistant.core import callback
 from homeassistant.helpers import selector
+from homeassistant.helpers.update_coordinator import UpdateFailed
+from homeassistant.util import dt as dt_util
 
 from .const import (
-    DOMAIN,
-    CONF_REGISTRATION,
-    CONF_VIN,
     CONF_FIRST_REGISTRATION,
+    CONF_REGISTRATION,
+    CONF_SCAN_INTERVAL,
+    CONF_VEHICLE_ID,
+    CONF_VIN,
+    DEFAULT_UPDATE_INTERVAL_HOURS,
+    DOMAIN,
 )
 from .coordinator import CepikCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
 
-def _date_schema(default_date: str | None = None) -> dict:
+def _date_schema(default_date: str | None = None) -> dict[vol.Marker, Any]:
     """Return a native HA date selector."""
-    default = default_date or date.today().isoformat()
+    default = default_date or dt_util.now().date().isoformat()
     return {
         vol.Required(
             CONF_FIRST_REGISTRATION,
@@ -29,19 +38,19 @@ def _date_schema(default_date: str | None = None) -> dict:
     }
 
 
-class CepikConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
+class CepikConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # pyright: ignore[reportCallIssue, reportGeneralTypeIssues]  # type: ignore[call-arg]
     """Config flow for CEPiK Historia Pojazdu."""
 
     VERSION = 3
 
     async def async_step_user(self, user_input=None):
         """Handle adding a vehicle."""
-        errors = {}
-        placeholders = {}
+        errors: dict[str, str] = {}
+        placeholders: dict[str, str] = {}
 
         if user_input is not None:
-            registration = user_input[CONF_REGISTRATION].strip().upper()
-            vin = user_input[CONF_VIN].strip().upper()
+            registration = re.sub(r"\s+", "", user_input[CONF_REGISTRATION]).upper()
+            vin = re.sub(r"\s+", "", user_input[CONF_VIN]).upper()
             first_date = user_input[CONF_FIRST_REGISTRATION]
 
             if not registration:
@@ -65,11 +74,18 @@ class CepikConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                             first_date,
                         )
                         await coordinator.async_validate()
-                    except Exception as err:
+                    except (UpdateFailed, ClientError, TimeoutError, OSError) as err:
                         _LOGGER.warning(
                             "Nie udało się zweryfikować pojazdu %s: %s",
                             registration,
                             err,
+                        )
+                        errors["base"] = "invalid_vehicle"
+                        placeholders["error"] = str(err)
+                    except Exception as err:
+                        _LOGGER.exception(
+                            "Nieoczekiwany błąd podczas weryfikacji pojazdu %s",
+                            registration,
                         )
                         errors["base"] = "invalid_vehicle"
                         placeholders["error"] = str(err)
@@ -80,6 +96,7 @@ class CepikConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                                 CONF_REGISTRATION: registration,
                                 CONF_VIN: vin,
                                 CONF_FIRST_REGISTRATION: first_date,
+                                CONF_VEHICLE_ID: vin,
                             },
                         )
 
@@ -104,13 +121,13 @@ class CepikConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if entry is None:
             return self.async_abort(reason="unknown")
 
-        errors = {}
-        placeholders = {}
+        errors: dict[str, str] = {}
+        placeholders: dict[str, str] = {}
         current = entry.data
 
         if user_input is not None:
-            registration = user_input[CONF_REGISTRATION].strip().upper()
-            vin = user_input[CONF_VIN].strip().upper()
+            registration = re.sub(r"\s+", "", user_input[CONF_REGISTRATION]).upper()
+            vin = re.sub(r"\s+", "", user_input[CONF_VIN]).upper()
             first_date = user_input[CONF_FIRST_REGISTRATION]
 
             if not registration:
@@ -123,21 +140,36 @@ class CepikConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 except (TypeError, ValueError):
                     errors[CONF_FIRST_REGISTRATION] = "invalid_date"
                 else:
+                    if vin != entry.unique_id:
+                        await self.async_set_unique_id(vin)
+                        self._abort_if_unique_id_configured()
+
                     try:
                         coordinator = CepikCoordinator(
-                            self.hass, registration, vin, first_date,
+                            self.hass,
+                            registration,
+                            vin,
+                            first_date,
                             vehicle_id=vin,
                         )
                         await coordinator.async_validate()
-                    except Exception as err:
+                    except (UpdateFailed, ClientError, TimeoutError, OSError) as err:
                         _LOGGER.warning(
                             "Nie udało się zweryfikować zmienionego pojazdu %s: %s",
-                            registration, err,
+                            registration,
+                            err,
+                        )
+                        errors["base"] = "invalid_vehicle"
+                        placeholders["error"] = str(err)
+                    except Exception as err:
+                        _LOGGER.exception(
+                            "Nieoczekiwany błąd podczas weryfikacji pojazdu %s",
+                            registration,
                         )
                         errors["base"] = "invalid_vehicle"
                         placeholders["error"] = str(err)
                     else:
-                        self.hass.config_entries.async_update_entry(
+                        return self.async_update_reload_and_abort(
                             entry,
                             title=f"CEPiK {registration}",
                             data={
@@ -146,9 +178,8 @@ class CepikConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                                 CONF_FIRST_REGISTRATION: first_date,
                                 CONF_VEHICLE_ID: vin,
                             },
+                            reason="reconfigure_successful",
                         )
-                        await self.hass.config_entries.async_reload(entry.entry_id)
-                        return self.async_abort(reason="reconfigure_successful")
 
         schema = vol.Schema(
             {
@@ -170,49 +201,54 @@ class CepikConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
 
     @staticmethod
-    async def async_migrate_entry(hass, config_entry):
-        """Migrate older config entries without losing vehicle data."""
-        version = config_entry.version
-        data = dict(config_entry.data)
+    @callback
+    def async_get_options_flow(
+        config_entry: config_entries.ConfigEntry,
+    ) -> config_entries.OptionsFlow:
+        """Get options flow handler."""
+        return CepikOptionsFlowHandler(config_entry)
 
-        # 0.1.x / 0.2.x used the same three pieces of vehicle data.
-        # Normalize possible legacy field names.
-        registration = (
-            data.get(CONF_REGISTRATION)
-            or data.get("numer_rejestracyjny")
-            or data.get("registration")
+
+class CepikOptionsFlowHandler(config_entries.OptionsFlow):
+    """Handle CEPiK options."""
+
+    def __init__(self, config_entry: config_entries.ConfigEntry | None = None) -> None:
+        """Initialize options flow."""
+        self._config_entry = config_entry
+
+    @property
+    def config_entry(self) -> config_entries.ConfigEntry:
+        """Return config entry."""
+        if self._config_entry is not None:
+            return self._config_entry
+        return super().config_entry
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
+        """Manage options."""
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        current_interval = self.config_entry.options.get(
+            CONF_SCAN_INTERVAL, DEFAULT_UPDATE_INTERVAL_HOURS
         )
-        vin = data.get(CONF_VIN) or data.get("VIN") or data.get("vin")
-        first_date = (
-            data.get(CONF_FIRST_REGISTRATION)
-            or data.get("data_pierwszej_rejestracji")
-            or data.get("first_registration_date")
+
+        schema = vol.Schema(
+            {
+                vol.Required(
+                    CONF_SCAN_INTERVAL,
+                    default=current_interval,
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=6,
+                        max=72,
+                        step=1,
+                        unit_of_measurement="h",
+                        mode=selector.NumberSelectorMode.BOX,
+                    )
+                ),
+            }
         )
 
-        if registration:
-            data[CONF_REGISTRATION] = str(registration).strip().upper()
-        if vin:
-            data[CONF_VIN] = str(vin).strip().upper()
-        if first_date:
-            try:
-                data[CONF_FIRST_REGISTRATION] = date.fromisoformat(
-                    str(first_date)
-                ).isoformat()
-            except ValueError:
-                # Keep the original value rather than destroying a user's
-                # configuration. The edit flow will allow correction.
-                data[CONF_FIRST_REGISTRATION] = str(first_date)
-
-        if version < 3:
-            _LOGGER.info(
-                "Migracja wpisu CEPiK %s: %s -> 3",
-                config_entry.title,
-                version,
-            )
-            hass.config_entries.async_update_entry(
-                config_entry,
-                data=data,
-                version=3,
-            )
-
-        return True
+        return self.async_show_form(step_id="init", data_schema=schema)

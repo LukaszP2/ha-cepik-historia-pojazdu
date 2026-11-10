@@ -1,0 +1,90 @@
+blueprint:
+  name: "CEPiK — Alert o odnotowaniu kradzieży pojazdu"
+  description: >-
+    Wysyła natychmiastowy alert (w tym opcjonalnie powiadomienie krytyczne omijające wyciszenie telefonu),
+    gdy w rejestrze CEPiK pojawi się status kradzieży lub poszukiwania Twojego pojazdu.
+  domain: automation
+  homeassistant:
+    min_version: "2024.6.0"
+  input:
+    entities_section:
+      name: Encje bezpieczeństwa CEPiK
+      icon: mdi:car-emergency
+      description: Wybierz sensor statusu kradzieży z integracji CEPiK.
+      input:
+        stolen_sensor:
+          name: Sensor statusu kradzieży
+          description: Sensor binarny wskazujący czy pojazd jest poszukiwany (np. binary_sensor.cepik_*_stolen_status).
+          selector:
+            entity:
+              filter:
+                - integration: cepik_historia_pojazdu
+                  domain: binary_sensor
+                  device_class: problem
+    notifications_section:
+      name: Powiadomienia i alarmy
+      icon: mdi:bell-ring
+      description: Odbiorca powiadomień oraz ustawienia alertu.
+      input:
+        notify_device:
+          name: Urządzenie do powiadomień
+          description: Telefon lub tablet z zainstalowaną oficjalną aplikacją Home Assistant.
+          selector:
+            device:
+              filter:
+                integration: mobile_app
+        critical_notification:
+          name: Powiadomienie krytyczne (omija wyciszenie)
+          description: Włącza dźwięk alarmu i maksymalny priorytet powiadomienia w aplikacji mobilnej iOS/Android.
+          default: true
+          selector:
+            boolean: {}
+        custom_actions:
+          name: Dodatkowe akcje (opcjonalnie)
+          description: Dodatkowe akcje alarmowe (np. włączenie syreny domowej, czerwone oświetlenie, wysłanie wiadomości SMS).
+          default: []
+          selector:
+            action: {}
+
+mode: single
+max_exceeded: silent
+
+trigger:
+  - trigger: state
+    entity_id: !input stolen_sensor
+    to: "on"
+
+variables:
+  stolen_sensor: !input stolen_sensor
+  is_critical: !input critical_notification
+
+condition:
+  # Zapobiegamy fałszywym alertom przy restarcie Home Assistanta (przejście ze stanu unknown/unavailable)
+  - condition: template
+    value_template: >-
+      {{
+        trigger.from_state is defined
+        and trigger.from_state is not none
+        and trigger.from_state.state not in ['unknown', 'unavailable', 'none', '']
+      }}
+
+action:
+  - alias: "Wyślij natychmiastowy alert o kradzieży"
+    domain: mobile_app
+    type: notify
+    device_id: !input notify_device
+    title: "🚨 CEPiK: Pojazd oznaczony jako KRADZIONY!"
+    message: >-
+      {% set dev_id = device_id(stolen_sensor) %}
+      {% set vehicle_name = device_attr(dev_id, 'name') if dev_id else state_attr(stolen_sensor, 'friendly_name') or 'Pojazd' %}
+      Uwaga! W centralnym rejestrze CEPiK (Historia Pojazdu) odnotowano status kradzieży lub poszukiwania dla {{ vehicle_name }}. Zweryfikuj status pojazdu na portalu historiapojazdu.gov.pl.
+    data:
+      tag: "cepik-stolen-{{ stolen_sensor }}"
+      notification_icon: "mdi:car-emergency"
+      color: "#FF0000"
+      push:
+        sound:
+          name: "default"
+          critical: "{{ 1 if is_critical else 0 }}"
+          volume: 1.0
+  - sequence: !input custom_actions

@@ -1,16 +1,32 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+import asyncio
 import logging
 import ssl
 import time
-from typing import Any
+from datetime import datetime, timedelta
+from typing import TYPE_CHECKING, Any
 
-from aiohttp import ClientError, ClientSession, CookieJar
+from aiohttp import ClientError, ClientTimeout, CookieJar
 from homeassistant.core import HomeAssistant
+if TYPE_CHECKING:
+    from homeassistant.config_entries import ConfigEntry
+from homeassistant.helpers.aiohttp_client import async_create_clientsession
+from homeassistant.helpers.issue_registry import (
+    IssueSeverity,
+    async_create_issue,
+    async_delete_issue,
+)
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .const import ENGINE_URL, VEHICLE_URL, TIMELINE_URL, UPDATE_INTERVAL_HOURS
+from .const import (
+    DEFAULT_UPDATE_INTERVAL_HOURS,
+    DOMAIN,
+    ENGINE_URL,
+    TIMELINE_URL,
+    VEHICLE_URL,
+)
+from .models import CepikVehicleData
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -19,9 +35,10 @@ USER_AGENT = (
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/152.0.0.0 Safari/537.36"
 )
+REQUEST_TIMEOUT = 30
 
 
-class CepikCoordinator(DataUpdateCoordinator[dict[str, Any]]):
+class CepikCoordinator(DataUpdateCoordinator[CepikVehicleData]):
     def __init__(
         self,
         hass: HomeAssistant,
@@ -29,27 +46,44 @@ class CepikCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         vin: str,
         first_registration_date: str,
         vehicle_id: str | None = None,
+        update_interval_hours: int = DEFAULT_UPDATE_INTERVAL_HOURS,
+        config_entry: ConfigEntry | None = None,
     ) -> None:
         self.registration = registration
         self.vin = vin
         self.first_registration_date = first_registration_date
         self.vehicle_id = vehicle_id or vin
-        self._nf_wid = f"HistoriaPojazdu:{int(time.time() * 1000)}"
+        self._ssl_ctx: ssl.SSLContext | None = None
 
-        super().__init__(
-            hass,
-            _LOGGER,
-            name=f"CEPiK {registration}",
-            update_interval=timedelta(hours=UPDATE_INTERVAL_HOURS),
-        )
+        try:
+            super().__init__(
+                hass,
+                _LOGGER,
+                name=f"CEPiK {registration}",
+                update_interval=timedelta(hours=update_interval_hours),
+                config_entry=config_entry,
+            )
+        except TypeError:
+            super().__init__(
+                hass,
+                _LOGGER,
+                name=f"CEPiK {registration}",
+                update_interval=timedelta(hours=update_interval_hours),
+            )
 
     @staticmethod
-    def _ssl_context() -> ssl.SSLContext:
+    def _create_ssl_context() -> ssl.SSLContext:
         ctx = ssl.create_default_context()
         ctx.set_ciphers("DEFAULT:@SECLEVEL=1")
         return ctx
 
-    async def async_validate(self) -> dict[str, Any]:
+    async def _async_get_ssl_context(self) -> ssl.SSLContext:
+        if self._ssl_ctx is None:
+            self._ssl_ctx = await self.hass.async_add_executor_job(self._create_ssl_context)
+        assert isinstance(self._ssl_ctx, ssl.SSLContext)
+        return self._ssl_ctx
+
+    async def async_validate(self) -> CepikVehicleData:
         return await self._async_update_data()
 
     async def _async_update_data(self) -> dict[str, Any]:
@@ -57,10 +91,17 @@ class CepikCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "User-Agent": USER_AGENT,
             "Accept-Language": "pl,en-US;q=0.9,en;q=0.8",
         }
+        nf_wid = f"HistoriaPojazdu:{int(time.time() * 1000)}"
 
         try:
-            ssl_context = await self.hass.async_add_executor_job(self._ssl_context)
-            async with ClientSession(cookie_jar=CookieJar()) as session:
+            async with asyncio.timeout(REQUEST_TIMEOUT):
+                ssl_context = await self._async_get_ssl_context()
+                session = async_create_clientsession(
+                    self.hass,
+                    cookie_jar=CookieJar(),
+                    timeout=ClientTimeout(total=REQUEST_TIMEOUT),
+                )
+
                 # Inicjalizacja sesji
                 async with session.get(
                     ENGINE_URL, headers=headers, allow_redirects=True, ssl=ssl_context
@@ -76,7 +117,7 @@ class CepikCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 }
                 async with session.post(
                     ENGINE_URL,
-                    data={"NF_WID": self._nf_wid},
+                    data={"NF_WID": nf_wid},
                     headers=init_headers,
                     allow_redirects=True,
                     ssl=ssl_context,
@@ -98,7 +139,7 @@ class CepikCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "Content-Type": "application/json",
                     "Origin": "https://moj.gov.pl",
                     "Referer": ENGINE_URL,
-                    "NF_WID": self._nf_wid,
+                    "NF_WID": nf_wid,
                     "X-XSRF-TOKEN": xsrf_token,
                 }
                 payload = {
@@ -117,7 +158,7 @@ class CepikCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     status = response.status
                     try:
                         data = await response.json(content_type=None)
-                    except Exception:
+                    except (ValueError, ClientError):
                         data = {"raw_response": await response.text()}
 
                 if status != 200:
@@ -128,10 +169,29 @@ class CepikCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     if status == 404:
                         raise UpdateFailed("Nie znaleziono pojazdu o podanych danych.")
                     if status == 406:
+                        async_create_issue(
+                            self.hass,
+                            DOMAIN,
+                            f"invalid_vehicle_{self.vehicle_id}",
+                            is_fixable=False,
+                            severity=IssueSeverity.WARNING,
+                            translation_key="invalid_vehicle_credentials",
+                            translation_placeholders={
+                                "registration": self.registration,
+                                "vin": self.vin,
+                            },
+                        )
                         raise UpdateFailed(
                             "API odrzuciło żądanie (HTTP 406). Sprawdź numer rejestracyjny, VIN i datę pierwszej rejestracji."
                         )
+                    if status == 429:
+                        retry_after = response.headers.get("Retry-After", "3600")
+                        raise UpdateFailed(
+                            f"Przekroczono limit zapytań do API (HTTP 429). Ponów za {retry_after}s."
+                        )
                     raise UpdateFailed(f"API Historia Pojazdu zwróciło HTTP {status}.")
+
+                async_delete_issue(self.hass, DOMAIN, f"invalid_vehicle_{self.vehicle_id}")
 
                 if not isinstance(data, dict):
                     raise UpdateFailed("API zwróciło nieoczekiwany format danych.")
@@ -152,19 +212,26 @@ class CepikCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                     data["timelineData"] = tl_data["timelineData"]
                                 else:
                                     data["timelineData"] = tl_data
-                        except Exception as e:
+                        except (ValueError, ClientError) as e:
                             _LOGGER.warning("Nie udało się sparsować osi czasu z CEPiK: %s", e)
                     else:
                         _LOGGER.warning("Endpoint timeline zwrócił status: %s", tl_response.status)
 
-            return {
-                "api": data,
-                "http_status": status,
-                "last_update": datetime.now().astimezone().isoformat(),
-            }
+            now_iso = datetime.now().astimezone().isoformat()
+            return CepikVehicleData.from_dict(
+                data={
+                    "api": data,
+                    "http_status": status,
+                    "last_update": now_iso,
+                },
+                http_status=status,
+                last_update=now_iso,
+            )
 
         except UpdateFailed:
             raise
+        except TimeoutError as err:
+            raise UpdateFailed(f"Przekroczono limit czasu połączenia z CEPiK: {err}") from err
         except (ClientError, OSError, ssl.SSLError) as err:
             raise UpdateFailed(f"Błąd połączenia z CEPiK: {err}") from err
         except Exception as err:

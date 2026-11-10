@@ -23,6 +23,13 @@ Integracja Home Assistant z polskim rejestrem CEPiK (Centralna Ewidencja Pojazd�
 - Ostatni odnotowany przebieg (odczyt licznika)
 - Podstawowe dane techniczne pojazdu (marka, model, rok produkcji)
 
+### 📋 Szablony automatyzacji (Blueprints)
+W repozytorium przygotowano gotowe szablony automatyzacji:
+- **Przypomnienie o badaniu technicznym (przeglądzie)** (`inspection_expiry_reminder.yaml`) — powiadomienia z wyprzedzeniem (30, 7, 1 dzień przed i w dniu wygaśnięcia).
+- **Przypomnienie o wygaśnięciu polisy OC** (`oc_expiry_reminder.yaml`) — powiadomienia z wyprzedzeniem (30, 14, 3 dni przed i w dniu wygaśnięcia), dające czas na wybór ubezpieczyciela.
+- **Alert o kradzieży pojazdu** (`stolen_vehicle_alert.yaml`) — natychmiastowe powiadomienie krytyczne w razie pojawienia się wpisu o kradzieży/poszukiwaniu.
+- **Powiadomienie o nowym odczycie drogomierza** (`odometer_reading_alert.yaml`) — powiadomienie o zarejestrowaniu nowego przebiegu w bazie CEPiK (np. po wizycie na SKP).
+
 ### Instalacja przez HACS (Niestandardowe repozytorium)
 
 ### 🚀 Szybka instalacja (1 kliknięcie przez My Home Assistant)
@@ -56,6 +63,13 @@ Po zainstalowaniu i ponownym uruchomieniu Home Assistant, kliknij poniższy przy
 ## 🇬🇧 Description
 
 Home Assistant integration for the Polish CEPiK vehicle registry (historiapojazdu.gov.pl).
+
+### 📋 Automation Blueprints
+Included automation blueprints:
+- **Periodic technical inspection reminder** (`inspection_expiry_reminder.yaml`)
+- **OC insurance expiration reminder** (`oc_expiry_reminder.yaml`)
+- **Stolen vehicle critical alert** (`stolen_vehicle_alert.yaml`)
+- **New odometer reading alert** (`odometer_reading_alert.yaml`)
 
 ### Installation via HACS (Custom Repository)
 

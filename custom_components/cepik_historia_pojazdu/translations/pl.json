@@ -11,8 +11,8 @@
         }
       },
       "reconfigure": {
-        "title": "Dodaj pojazd",
-        "description": "Podaj dane wymagane przez usługę Historia Pojazdu.",
+        "title": "Zmień dane pojazdu",
+        "description": "Zaktualizuj dane pojazdu dla usługi Historia Pojazdu.",
         "data": {
           "registration_number": "Numer rejestracyjny",
           "vin": "VIN",
@@ -20,21 +20,84 @@
         }
       }
     },
-    "error": {"invalid_date": "Nieprawidłowa data pierwszej rejestracji.", "required": "Pole jest wymagane.", "invalid_vehicle": "Nie udało się zweryfikować pojazdu: {error}"},
-    "abort": {"already_configured": "Ten pojazd jest już skonfigurowany.", "reconfigure_successful": "Konfiguracja została zaktualizowana.", "unknown": "Nie znaleziono wpisu konfiguracji."}
+    "error": {
+      "invalid_date": "Nieprawidłowa data pierwszej rejestracji.",
+      "required": "Pole jest wymagane.",
+      "invalid_vehicle": "Nie udało się zweryfikować pojazdu: {error}"
+    },
+    "abort": {
+      "already_configured": "Ten pojazd jest już skonfigurowany.",
+      "reconfigure_successful": "Konfiguracja została zaktualizowana.",
+      "unknown": "Nie znaleziono wpisu konfiguracji."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Opcje CEPiK",
+        "description": "Skonfiguruj częstotliwość sprawdzania danych pojazdu.",
+        "data": {
+          "scan_interval": "Częstotliwość aktualizacji danych (godziny)"
+        }
+      }
+    }
+  },
+  "issues": {
+    "invalid_vehicle_credentials": {
+      "title": "Nieprawidłowe dane pojazdu {registration}",
+      "description": "CEPiK Historia Pojazdu odrzucił dane pojazdu (błąd HTTP 406). Zmień dane pojazdu, wprowadzając poprawny numer rejestracyjny, VIN oraz datę pierwszej rejestracji."
+    }
   },
   "entity": {
     "sensor": {
-      "status": {"name": "Status", "state": {"data_current": "Dane aktualne", "data_error": "Błąd danych"}},
-      "odometer": {"name": "Przebieg"},
-      "odometer_date": {"name": "Przebieg — data odczytu"},
-      "inspection_expiry": {"name": "Badanie techniczne — ważne do"},
-      "oc_expiry": {"name": "OC — ważne do"},
-      "update_date": {"name": "Data aktualizacji danych"}
+      "status": {
+        "name": "Status",
+        "state": {
+          "data_current": "Dane aktualne",
+          "data_error": "Błąd danych"
+        }
+      },
+      "odometer": {
+        "name": "Przebieg"
+      },
+      "odometer_date": {
+        "name": "Przebieg — data odczytu"
+      },
+      "inspection_expiry": {
+        "name": "Badanie techniczne — ważne do"
+      },
+      "oc_expiry": {
+        "name": "OC — ważne do"
+      },
+      "update_date": {
+        "name": "Data aktualizacji danych"
+      },
+      "production_year": {
+        "name": "Rok produkcji"
+      }
     },
     "binary_sensor": {
-      "oc_status": {"name": "OC"},
-      "inspection_status": {"name": "Badanie techniczne"}
+      "oc_status": {
+        "name": "OC",
+        "state": {
+          "on": "Aktualne",
+          "off": "Brak / wygasłe"
+        }
+      },
+      "inspection_status": {
+        "name": "Badanie techniczne",
+        "state": {
+          "on": "Aktualne",
+          "off": "Brak / wygasłe"
+        }
+      },
+      "stolen_status": {
+        "name": "Status kradzieży",
+        "state": {
+          "on": "Zgłoszono kradzież",
+          "off": "Brak zgłoszenia"
+        }
+      }
     }
   },
   "title": "CEPiK Historia Pojazdu"

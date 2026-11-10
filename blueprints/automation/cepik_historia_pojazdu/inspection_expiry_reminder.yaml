@@ -1,0 +1,152 @@
+blueprint:
+  name: "CEPiK — Przypomnienie o badaniu technicznym (przeglądzie)"
+  description: >-
+    Codziennie o wybranej godzinie sprawdza termin ważności badania technicznego pojazdu
+    w rejestrze CEPiK i wysyła powiadomienie z wyprzedzeniem (np. 30, 7 i 1 dzień przed
+    oraz w dniu upływu ważności).
+  domain: automation
+  homeassistant:
+    min_version: "2024.6.0"
+  input:
+    entities_section:
+      name: Encje pojazdu CEPiK
+      icon: mdi:car-info
+      description: Wybierz sensor ważności badania technicznego z integracji CEPiK.
+      input:
+        inspection_sensor:
+          name: Sensor terminu badania technicznego
+          description: Sensor wskazujący datę ważności badania technicznego (np. sensor.cepik_*_inspection_expiry).
+          selector:
+            entity:
+              filter:
+                - integration: cepik_historia_pojazdu
+                  domain: sensor
+                  device_class: date
+    schedule_section:
+      name: Harmonogram i wyprzedzenie
+      icon: mdi:calendar-clock
+      description: Określ, kiedy i z jakim wyprzedzeniem chcesz otrzymywać przypomnienia.
+      input:
+        reminder_time:
+          name: Godzina sprawdzenia
+          description: Godzina, o której automatyzacja sprawdza zbliżający się termin badania.
+          default: "09:00:00"
+          selector:
+            time: {}
+        days_before:
+          name: Główne przypomnienie (dni wyprzedzenia)
+          description: Na ile dni przed upływem terminu wysłać pierwsze przypomnienie.
+          default: 30
+          selector:
+            number:
+              min: 1
+              max: 90
+              step: 1
+              unit_of_measurement: "dni"
+              mode: box
+        notify_week_before:
+          name: Dodatkowe przypomnienie na 7 dni przed
+          description: Wyślij przypomnienie na tydzień przed końcem ważności badania.
+          default: true
+          selector:
+            boolean: {}
+        notify_day_before:
+          name: Dodatkowe przypomnienie na 1 dzień przed
+          description: Wyślij pilne przypomnienie dzień przed upływem terminu.
+          default: true
+          selector:
+            boolean: {}
+        notify_on_day:
+          name: Alert w dniu wygaśnięcia
+          description: Wyślij alert w dniu upływu terminu badania technicznego.
+          default: true
+          selector:
+            boolean: {}
+    notifications_section:
+      name: Powiadomienia i akcje
+      icon: mdi:bell-ring
+      description: Odbiorca powiadomień oraz ewentualne dodatkowe akcje.
+      input:
+        notify_device:
+          name: Urządzenie do powiadomień
+          description: Telefon lub tablet z zainstalowaną oficjalną aplikacją Home Assistant.
+          selector:
+            device:
+              filter:
+                integration: mobile_app
+        custom_actions:
+          name: Dodatkowe akcje (opcjonalnie)
+          description: Własne akcje wykonywane w momencie wysłania powiadomienia (np. głośnik TTS, wpis w kalendarzu).
+          default: []
+          selector:
+            action: {}
+
+mode: single
+max_exceeded: silent
+
+trigger:
+  - trigger: time
+    at: !input reminder_time
+
+variables:
+  inspection_sensor: !input inspection_sensor
+  days_before_val: !input days_before
+  notify_week: !input notify_week_before
+  notify_day: !input notify_day_before
+  notify_today: !input notify_on_day
+
+condition:
+  - condition: template
+    value_template: >-
+      {% set exp_str = states(inspection_sensor) %}
+      {% if exp_str in ['unavailable', 'unknown', 'none', ''] %}
+        false
+      {% else %}
+        {% set exp_dt = as_datetime(exp_str) %}
+        {% if exp_dt is none %}
+          false
+        {% else %}
+          {% set target_date = exp_dt.date() %}
+          {% set today = now().date() %}
+          {% set diff = (target_date - today).days %}
+          {{
+            diff == (days_before_val | int)
+            or (notify_week and diff == 7)
+            or (notify_day and diff == 1)
+            or (notify_today and diff == 0)
+          }}
+        {% endif %}
+      {% endif %}
+
+action:
+  - alias: "Wyślij przypomnienie o badaniu technicznym"
+    domain: mobile_app
+    type: notify
+    device_id: !input notify_device
+    title: >-
+      {% set exp_dt = as_datetime(states(inspection_sensor)) %}
+      {% set diff = (exp_dt.date() - now().date()).days if exp_dt is not none else 0 %}
+      {% if diff == 0 %}
+        ⚠️ CEPiK: Dziś upływa termin badania technicznego!
+      {% elif diff == 1 %}
+        ⚠️ CEPiK: Jutro upływa termin badania technicznego!
+      {% else %}
+        🔧 CEPiK: Zbliża się termin badania technicznego
+      {% endif %}
+    message: >-
+      {% set dev_id = device_id(inspection_sensor) %}
+      {% set vehicle_name = device_attr(dev_id, 'name') if dev_id else state_attr(inspection_sensor, 'friendly_name') or 'Pojazd' %}
+      {% set exp_dt = as_datetime(states(inspection_sensor)) %}
+      {% set target_date = exp_dt.date() if exp_dt is not none else states(inspection_sensor) %}
+      {% set diff = (target_date - now().date()).days if exp_dt is not none else 0 %}
+      {% if diff == 0 %}
+        Dziś ({{ target_date }}) upływa ważność badania technicznego dla {{ vehicle_name }}. Pamiętaj, że poruszanie się pojazdem bez ważnego badania grozi mandatem i zatrzymaniem dowodu rejestracyjnego.
+      {% elif diff == 1 %}
+        Jutro ({{ target_date }}) upływa ważność badania technicznego dla {{ vehicle_name }}. Umów wizytę na stacji kontroli pojazdów.
+      {% else %}
+        Za {{ diff }} dni ({{ target_date }}) upływa ważność badania technicznego dla {{ vehicle_name }}.
+      {% endif %}
+    data:
+      tag: "cepik-inspection-{{ inspection_sensor }}"
+      notification_icon: "mdi:car-wrench"
+  - sequence: !input custom_actions

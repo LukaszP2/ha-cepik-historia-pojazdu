@@ -1,0 +1,152 @@
+blueprint:
+  name: "CEPiK — Przypomnienie o wygaśnięciu polisy OC"
+  description: >-
+    Codziennie o wybranej godzinie sprawdza datę ważności polisy OC pojazdu
+    w rejestrze CEPiK i wysyła powiadomienie z wyprzedzeniem (np. 30, 14, 3 dni przed
+    oraz w dniu wygaśnięcia), dając czas na porównanie ofert i zawarcie nowej polisy.
+  domain: automation
+  homeassistant:
+    min_version: "2024.6.0"
+  input:
+    entities_section:
+      name: Encje ubezpieczenia CEPiK
+      icon: mdi:shield-car
+      description: Wybierz sensor ważności polisy OC z integracji CEPiK.
+      input:
+        oc_sensor:
+          name: Sensor terminu polisy OC
+          description: Sensor wskazujący datę wygaśnięcia ubezpieczenia OC (np. sensor.cepik_*_oc_expiry).
+          selector:
+            entity:
+              filter:
+                - integration: cepik_historia_pojazdu
+                  domain: sensor
+                  device_class: date
+    schedule_section:
+      name: Harmonogram i wyprzedzenie
+      icon: mdi:calendar-clock
+      description: Określ, kiedy i z jakim wyprzedzeniem chcesz otrzymywać przypomnienia.
+      input:
+        reminder_time:
+          name: Godzina sprawdzenia
+          description: Godzina, o której automatyzacja sprawdza zbliżający się termin wygaśnięcia OC.
+          default: "09:00:00"
+          selector:
+            time: {}
+        days_before:
+          name: Główne przypomnienie (dni wyprzedzenia)
+          description: Na ile dni przed końcem polisy wysłać pierwsze przypomnienie (warto dać czas na wybór ubezpieczenia).
+          default: 30
+          selector:
+            number:
+              min: 1
+              max: 90
+              step: 1
+              unit_of_measurement: "dni"
+              mode: box
+        notify_two_weeks_before:
+          name: Dodatkowe przypomnienie na 14 dni przed
+          description: Wyślij przypomnienie na dwa tygodnie przed końcem polisy.
+          default: true
+          selector:
+            boolean: {}
+        notify_few_days_before:
+          name: Pilne przypomnienie na 3 dni przed
+          description: Wyślij pilne przypomnienie 3 dni przed wygaśnięciem OC.
+          default: true
+          selector:
+            boolean: {}
+        notify_on_day:
+          name: Alert w dniu wygaśnięcia
+          description: Wyślij alert w dniu upływu ważności polisy OC.
+          default: true
+          selector:
+            boolean: {}
+    notifications_section:
+      name: Powiadomienia i akcje
+      icon: mdi:bell-ring
+      description: Odbiorca powiadomień oraz ewentualne dodatkowe akcje.
+      input:
+        notify_device:
+          name: Urządzenie do powiadomień
+          description: Telefon lub tablet z zainstalowaną oficjalną aplikacją Home Assistant.
+          selector:
+            device:
+              filter:
+                integration: mobile_app
+        custom_actions:
+          name: Dodatkowe akcje (opcjonalnie)
+          description: Własne akcje wykonywane w momencie wysłania powiadomienia.
+          default: []
+          selector:
+            action: {}
+
+mode: single
+max_exceeded: silent
+
+trigger:
+  - trigger: time
+    at: !input reminder_time
+
+variables:
+  oc_sensor: !input oc_sensor
+  days_before_val: !input days_before
+  notify_14: !input notify_two_weeks_before
+  notify_3: !input notify_few_days_before
+  notify_today: !input notify_on_day
+
+condition:
+  - condition: template
+    value_template: >-
+      {% set exp_str = states(oc_sensor) %}
+      {% if exp_str in ['unavailable', 'unknown', 'none', ''] %}
+        false
+      {% else %}
+        {% set exp_dt = as_datetime(exp_str) %}
+        {% if exp_dt is none %}
+          false
+        {% else %}
+          {% set target_date = exp_dt.date() %}
+          {% set today = now().date() %}
+          {% set diff = (target_date - today).days %}
+          {{
+            diff == (days_before_val | int)
+            or (notify_14 and diff == 14)
+            or (notify_3 and diff == 3)
+            or (notify_today and diff == 0)
+          }}
+        {% endif %}
+      {% endif %}
+
+action:
+  - alias: "Wyślij przypomnienie o polisie OC"
+    domain: mobile_app
+    type: notify
+    device_id: !input notify_device
+    title: >-
+      {% set exp_dt = as_datetime(states(oc_sensor)) %}
+      {% set diff = (exp_dt.date() - now().date()).days if exp_dt is not none else 0 %}
+      {% if diff == 0 %}
+        ⚠️ CEPiK: Dziś kończy się polisa OC!
+      {% elif diff <= 3 %}
+        ⚠️ CEPiK: Pilne! Za {{ diff }} dni kończy się polisa OC
+      {% else %}
+        🛡️ CEPiK: Zbliża się koniec ubezpieczenia OC
+      {% endif %}
+    message: >-
+      {% set dev_id = device_id(oc_sensor) %}
+      {% set vehicle_name = device_attr(dev_id, 'name') if dev_id else state_attr(oc_sensor, 'friendly_name') or 'Pojazd' %}
+      {% set exp_dt = as_datetime(states(oc_sensor)) %}
+      {% set target_date = exp_dt.date() if exp_dt is not none else states(oc_sensor) %}
+      {% set diff = (target_date - now().date()).days if exp_dt is not none else 0 %}
+      {% if diff == 0 %}
+        Dziś ({{ target_date }}) upływa ważność polisy OC dla {{ vehicle_name }}. Upewnij się, że nowa polisa została opłacona i obowiązuje od jutra (brak OC skutkuje karami UFG).
+      {% elif diff == 1 %}
+        Jutro ({{ target_date }}) upływa ważność polisy OC dla {{ vehicle_name }}.
+      {% else %}
+        Za {{ diff }} dni ({{ target_date }}) upływa ważność polisy OC dla {{ vehicle_name }}. To dobry moment na wybór nowej oferty ubezpieczenia.
+      {% endif %}
+    data:
+      tag: "cepik-oc-{{ oc_sensor }}"
+      notification_icon: "mdi:shield-car"
+  - sequence: !input custom_actions

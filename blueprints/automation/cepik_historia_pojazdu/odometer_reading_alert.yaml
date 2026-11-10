@@ -1,0 +1,95 @@
+blueprint:
+  name: "CEPiK — Powiadomienie o nowym odczycie drogomierza (przebiegu)"
+  description: >-
+    Wysyła powiadomienie po odnotowaniu w rejestrze CEPiK nowego odczytu stanu drogomierza
+    (np. po wizycie na stacji kontroli pojazdów lub kontroli drogowej), podając nową i poprzednią wartość.
+  domain: automation
+  homeassistant:
+    min_version: "2024.6.0"
+  input:
+    entities_section:
+      name: Encje przebiegu CEPiK
+      icon: mdi:counter
+      description: Wybierz sensor przebiegu z integracji CEPiK.
+      input:
+        odometer_sensor:
+          name: Sensor przebiegu (drogomierza)
+          description: Sensor raportujący aktualny przebieg pojazdu (np. sensor.cepik_*_odometer).
+          selector:
+            entity:
+              filter:
+                - integration: cepik_historia_pojazdu
+                  domain: sensor
+                  device_class: distance
+        odometer_date_sensor:
+          name: Sensor daty odczytu drogomierza (opcjonalnie)
+          description: Sensor raportujący datę ostatniego odczytu (np. sensor.cepik_*_odometer_date).
+          default: ""
+          selector:
+            entity:
+              filter:
+                - integration: cepik_historia_pojazdu
+                  domain: sensor
+                  device_class: date
+    notifications_section:
+      name: Powiadomienia i akcje
+      icon: mdi:bell-ring
+      description: Odbiorca powiadomień oraz ewentualne dodatkowe akcje.
+      input:
+        notify_device:
+          name: Urządzenie do powiadomień
+          description: Telefon lub tablet z zainstalowaną oficjalną aplikacją Home Assistant.
+          selector:
+            device:
+              filter:
+                integration: mobile_app
+        custom_actions:
+          name: Dodatkowe akcje (opcjonalnie)
+          description: Dodatkowe akcje wykonywane w momencie odnotowania nowego przebiegu.
+          default: []
+          selector:
+            action: {}
+
+mode: single
+max_exceeded: silent
+
+trigger:
+  - trigger: state
+    entity_id: !input odometer_sensor
+
+variables:
+  odometer_sensor: !input odometer_sensor
+  date_sensor: !input odometer_date_sensor
+
+condition:
+  # Odrzucamy uruchomienia przy restarcie HA lub przejściach ze stanów niedostępnych
+  - condition: template
+    value_template: >-
+      {{
+        trigger.from_state is defined
+        and trigger.from_state is not none
+        and trigger.from_state.state not in ['unknown', 'unavailable', 'none', '']
+        and trigger.to_state is defined
+        and trigger.to_state is not none
+        and trigger.to_state.state not in ['unknown', 'unavailable', 'none', '']
+        and trigger.to_state.state != trigger.from_state.state
+      }}
+
+action:
+  - alias: "Wyślij informację o nowym odczycie drogomierza"
+    domain: mobile_app
+    type: notify
+    device_id: !input notify_device
+    title: "🚗 CEPiK: Nowy odczyt przebiegu"
+    message: >-
+      {% set dev_id = device_id(odometer_sensor) %}
+      {% set vehicle_name = device_attr(dev_id, 'name') if dev_id else state_attr(odometer_sensor, 'friendly_name') or 'Pojazd' %}
+      {% set new_km = trigger.to_state.state | int(0) %}
+      {% set old_km = trigger.from_state.state | int(0) %}
+      {% set diff = new_km - old_km %}
+      {% set d_str = states(date_sensor) if date_sensor != '' and states(date_sensor) not in ['unavailable', 'unknown', 'none', ''] else '' %}
+      Zarejestrowano nowy odczyt drogomierza w CEPiK dla {{ vehicle_name }}: {{ new_km }} km (poprzednio: {{ old_km }} km{% if diff > 0 %}; +{{ diff }} km{% endif %}){% if d_str %} z dnia {{ d_str }}{% endif %}.
+    data:
+      tag: "cepik-odometer-{{ odometer_sensor }}"
+      notification_icon: "mdi:counter"
+  - sequence: !input custom_actions

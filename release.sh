@@ -10,6 +10,14 @@ fi
 NEW_VER="$1"
 MSG="${2:-Wydanie v${NEW_VER}}"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "${REPO_DIR}"
+
+echo "==> Uruchamianie testów pre-flight..."
+echo "--> Ruff check..."
+ruff check .
+
+echo "--> Pytest..."
+pytest
 MANIFEST="${REPO_DIR}/custom_components/cepik_historia_pojazdu/manifest.json"
 
 python3 -c "
