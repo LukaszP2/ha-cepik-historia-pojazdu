@@ -4,6 +4,9 @@
   "codeowners": [
     "@LukaszP2"
   ],
+  "categories": [
+    "vehicles_transport.cars_evs"
+  ],
   "config_flow": true,
   "dependencies": [],
   "documentation": "https://github.com/LukaszP2/ha-cepik-historia-pojazdu",

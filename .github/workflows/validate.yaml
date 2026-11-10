@@ -39,3 +39,4 @@ jobs:
         with:
           category: "integration"
           github_token: ${{ secrets.GITHUB_TOKEN }}
+          ignore: "description topics"
